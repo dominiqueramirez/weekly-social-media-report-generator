@@ -72,7 +72,7 @@ export default function App() {
       headers.forEach((header, index) => {
         const value = values[index] || '';
         const numValue = parseFloat(value);
-        row[header] = isNaN(numValue) || value === '' ? value : numValue;
+        row[header] = isNaN(numValue) || value === '' || !/^-?\d+(\.\d+)?$/.test(value) ? value : numValue;
       });
       
       if (Object.keys(row).length > 0) {
