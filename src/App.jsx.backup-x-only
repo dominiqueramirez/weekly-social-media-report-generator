@@ -10,10 +10,6 @@ export default function App() {
   const [success, setSuccess] = useState('');
   const [loading, setLoading] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
-  const [igPostsData, setIgPostsData] = useState(null);
-  const [fbPostsData, setFbPostsData] = useState(null);
-  const [igReport, setIgReport] = useState('');
-  const [activeTab, setActiveTab] = useState('x');
 
   useEffect(() => {
     // Load JSZip from CDN
@@ -90,18 +86,6 @@ export default function App() {
     if (headers.includes('Tweet Text') || headers.includes('Tweet Permalink') || headers.includes('Engagements')) {
       return 'tweets';
     }
-    if (headers.includes('Instagram Post ID')) {
-      if (headers.includes('Comments') && headers.includes('Shares')) {
-        return 'ig_posts';
-      }
-      return 'ig_top_posts';
-    }
-    if (headers.includes('Facebook Post ID')) {
-      if (headers.includes('Reactions')) {
-        return 'fb_posts';
-      }
-      return 'fb_video_views';
-    }
     if (headers.some(h => h.includes('Followers (Overall aggregated value')) || 
         headers.some(h => h.includes('Net new followers'))) {
       return 'metrics';
@@ -127,8 +111,6 @@ export default function App() {
       
       let foundTweets = false;
       let foundMetrics = false;
-      let foundIgPosts = false;
-      let foundFbPosts = false;
       
       for (const [filename, zipFile] of Object.entries(zipContent.files)) {
         if (zipFile.dir) continue;
@@ -148,27 +130,18 @@ export default function App() {
           } else if (csvType === 'metrics') {
             setMetricsData(data);
             foundMetrics = true;
-          } else if (csvType === 'ig_posts') {
-            setIgPostsData(data);
-            foundIgPosts = true;
-          } else if (csvType === 'fb_posts') {
-            setFbPostsData(data);
-            foundFbPosts = true;
           }
         }
       }
       
-      const xReady = foundTweets && foundMetrics;
-      const igReady = foundIgPosts && foundFbPosts && foundMetrics;
-      
-      if (xReady && igReady) {
-        setSuccess('Zip file processed successfully! Found data for both X and Instagram reports.');
-      } else if (xReady) {
-        setSuccess('Zip file processed! X report data found. Instagram data incomplete or missing.');
-      } else if (igReady) {
-        setSuccess('Zip file processed! Instagram report data found. X data incomplete or missing.');
-      } else {
+      if (foundTweets && foundMetrics) {
+        setSuccess('Zip file processed successfully! Found both CSV files.');
+      } else if (!foundTweets && !foundMetrics) {
         setError('Could not find the expected CSV files in the zip. Please make sure you uploaded the correct Hootsuite export.');
+      } else if (!foundTweets) {
+        setError('Found metrics CSV but missing tweets CSV in the zip file.');
+      } else {
+        setError('Found tweets CSV but missing metrics CSV in the zip file.');
       }
       
     } catch (err) {
@@ -287,125 +260,10 @@ export default function App() {
     }
   };
 
-  const matchAndCombinePosts = (igPosts, fbPosts) => {
-    const normalizeMessage = (msg) => {
-      if (!msg) return '';
-      return msg.trim().toLowerCase().substring(0, 100);
-    };
-
-    return igPosts.map(igPost => {
-      const igNorm = normalizeMessage(igPost['Post Message']);
-      const baseCombined = {
-        combinedLikes: parseFloat(igPost.Likes) || 0,
-        combinedComments: parseFloat(igPost.Comments) || 0,
-        combinedShares: parseFloat(igPost.Shares) || 0,
-        combinedViews: parseFloat(igPost.Views) || 0,
-        combinedReach: parseFloat(igPost.Reach) || 0,
-        combinedEngagement: parseFloat(igPost.Engagement) || 0,
-      };
-
-      if (!igNorm) return { ...igPost, fbMatch: null, ...baseCombined };
-
-      const fbMatch = fbPosts.find(fbPost => {
-        const fbNorm = normalizeMessage(fbPost['Post Message']);
-        return fbNorm && igNorm === fbNorm;
-      });
-
-      if (fbMatch) {
-        return {
-          ...igPost,
-          fbMatch,
-          combinedLikes: baseCombined.combinedLikes + (parseFloat(fbMatch.Reactions) || 0),
-          combinedComments: baseCombined.combinedComments + (parseFloat(fbMatch.Comments) || 0),
-          combinedShares: baseCombined.combinedShares + (parseFloat(fbMatch.Shares) || 0),
-          combinedViews: baseCombined.combinedViews + (parseFloat(fbMatch['Post views']) || 0),
-          combinedReach: baseCombined.combinedReach + (parseFloat(fbMatch.Reach) || 0),
-          combinedEngagement: baseCombined.combinedEngagement + (parseFloat(fbMatch.Engagement) || 0),
-        };
-      }
-
-      return { ...igPost, fbMatch: null, ...baseCombined };
-    });
-  };
-
-  const generateInstagramReport = () => {
-    try {
-      if (!igPostsData || !fbPostsData || !metricsData) {
-        setError('Please upload a zip file with Instagram, Facebook, and account metrics data');
-        return;
-      }
-
-      // Get account-level IG metrics
-      let igFollowers = 0;
-      let igNewFollowers = 0;
-      let igProfileReach = 0;
-
-      metricsData.forEach((row, index) => {
-        const followersKey = Object.keys(row).find(k => k.includes('Followers') && k.includes('secvetaffairs'));
-        const newFollowersKey = Object.keys(row).find(k => k.includes('New followers') && k.includes('secvetaffairs'));
-        const profileReachKey = Object.keys(row).find(k => k.includes('Profile reach') && k.includes('secvetaffairs'));
-
-        const followers = parseFloat(row[followersKey] || 0);
-        const newFollowers = parseFloat(row[newFollowersKey] || 0);
-        const profileReach = parseFloat(row[profileReachKey] || 0);
-
-        if (index === metricsData.length - 1) {
-          igFollowers = followers;
-        }
-        igNewFollowers += newFollowers;
-        igProfileReach += profileReach;
-      });
-
-      // Match and combine cross-posted content
-      const combinedPosts = matchAndCombinePosts(igPostsData, fbPostsData);
-
-      // Filter out Stories for top posts ranking
-      const feedPosts = combinedPosts.filter(p => {
-        const postType = (p['Post Type'] || '').toLowerCase();
-        return postType !== 'story';
-      });
-
-      // Sort by combined engagement
-      const sortedPosts = [...feedPosts].sort((a, b) => b.combinedEngagement - a.combinedEngagement);
-      const top3 = sortedPosts.slice(0, 3);
-
-      // Calculate total combined views across all posts
-      const totalViews = combinedPosts.reduce((sum, p) => sum + p.combinedViews, 0);
-
-      let reportText = `Last week, the @secvetaffairs Instagram account gained ${Math.round(igNewFollowers)} new followers, bringing your total followers to nearly ${(Math.floor(igFollowers / 100) / 10).toFixed(1)}K. `;
-      reportText += `Your posts reached more than ${formatNumber(igProfileReach)} accounts and had more than ${formatNumber(totalViews)} total views. `;
-      reportText += `Here is a breakdown of your top three performing posts and associated metrics:\n\n`;
-
-      top3.forEach((post, index) => {
-        const postText = (post['Post Message'] || '').replace(/https?:\/\/[^\s]+/g, '').trim();
-        const postLink = post['Post Permalink'] || '';
-        const likes = formatNumber(post.combinedLikes);
-        const comments = formatNumber(post.combinedComments);
-        const views = formatNumber(post.combinedViews);
-        const shares = formatNumber(post.combinedShares);
-
-        reportText += `**@secvetaffairs Instagram post:** "${postText}"\n`;
-        reportText += `Link: ${postLink}\n`;
-        reportText += `- Over ${likes} likes\n`;
-        reportText += `- Over ${comments} comments\n`;
-        reportText += `- Over ${views} views\n`;
-        reportText += `- Over ${shares} shares\n`;
-
-        if (index < 2) reportText += '\n';
-      });
-
-      setIgReport(reportText);
-      setSuccess('Instagram report generated successfully!');
-      setError('');
-    } catch (err) {
-      setError(`Error generating Instagram report: ${err.message}`);
-    }
-  };
-
-  const copyToClipboard = async (textToCopy) => {
+  const copyToClipboard = async () => {
     try {
       const tempDiv = document.createElement('div');
-      let htmlContent = textToCopy
+      let htmlContent = report
         .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
         .replace(/Link: (https:\/\/[^\n]+)/g, 'Link: <a href="$1" target="_blank">$1</a>')
         .replace(/\n/g, '<br>');
@@ -430,7 +288,7 @@ export default function App() {
       setTimeout(() => setSuccess(''), 3000);
     } catch (err) {
       try {
-        await navigator.clipboard.writeText(textToCopy);
+        await navigator.clipboard.writeText(report);
         setSuccess('Report copied to clipboard (plain text)!');
         setTimeout(() => setSuccess(''), 3000);
       } catch (fallbackErr) {
@@ -484,74 +342,44 @@ export default function App() {
           <div className="mt-4">
             {!jsZipLoaded && (
               <p className="text-sm text-gray-600 flex items-center">
-                <span className="animate-spin rounded-full h-4 w-4 border-b-2 border-gray-600 mr-2 inline-block"></span>
+                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-gray-600 mr-2"></div>
                 Loading zip file processor...
               </p>
             )}
             
             {loading && (
               <p className="text-sm text-blue-600 flex items-center">
-                <span className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600 mr-2 inline-block"></span>
+                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600 mr-2"></div>
                 Processing zip file...
               </p>
             )}
             
-            {(tweetsData || metricsData || igPostsData || fbPostsData) && (
+            {tweetsData && metricsData && (
               <div className="space-y-1">
-                {tweetsData && (
-                  <p className="text-sm text-green-600 flex items-center">
-                    <CheckCircle className="w-4 h-4 mr-1" />
-                    X Tweets CSV loaded ({tweetsData.length} tweets)
-                  </p>
-                )}
-                {metricsData && (
-                  <p className="text-sm text-green-600 flex items-center">
-                    <CheckCircle className="w-4 h-4 mr-1" />
-                    Account Metrics CSV loaded ({metricsData.length} days)
-                  </p>
-                )}
-                {igPostsData && (
-                  <p className="text-sm text-green-600 flex items-center">
-                    <CheckCircle className="w-4 h-4 mr-1" />
-                    Instagram Posts CSV loaded ({igPostsData.length} posts)
-                  </p>
-                )}
-                {fbPostsData && (
-                  <p className="text-sm text-green-600 flex items-center">
-                    <CheckCircle className="w-4 h-4 mr-1" />
-                    Facebook Posts CSV loaded ({fbPostsData.length} posts)
-                  </p>
-                )}
+                <p className="text-sm text-green-600 flex items-center">
+                  <CheckCircle className="w-4 h-4 mr-1" />
+                  Tweets CSV loaded ({tweetsData.length} tweets)
+                </p>
+                <p className="text-sm text-green-600 flex items-center">
+                  <CheckCircle className="w-4 h-4 mr-1" />
+                  Metrics CSV loaded ({metricsData.length} days)
+                </p>
               </div>
             )}
           </div>
+          
+          <button
+            onClick={generateReport}
+            disabled={!tweetsData || !metricsData || loading}
+            className={`mt-6 px-8 py-3 rounded-md font-semibold text-white transition-colors ${
+              tweetsData && metricsData && !loading
+                ? 'bg-blue-700 hover:bg-blue-800 cursor-pointer'
+                : 'bg-gray-400 cursor-not-allowed'
+            }`}
+          >
+            Generate Report
+          </button>
         </div>
-        
-        {/* Tab Navigation */}
-        {(tweetsData || igPostsData) && (
-          <div className="flex border-b-2 border-gray-200 mb-6">
-            <button
-              onClick={() => setActiveTab('x')}
-              className={`px-6 py-3 font-semibold text-sm transition-colors ${
-                activeTab === 'x'
-                  ? 'text-blue-700 border-b-2 border-blue-700 -mb-[2px]'
-                  : 'text-gray-500 hover:text-gray-700'
-              }`}
-            >
-              X Report
-            </button>
-            <button
-              onClick={() => setActiveTab('instagram')}
-              className={`px-6 py-3 font-semibold text-sm transition-colors ${
-                activeTab === 'instagram'
-                  ? 'text-purple-700 border-b-2 border-purple-700 -mb-[2px]'
-                  : 'text-gray-500 hover:text-gray-700'
-              }`}
-            >
-              Instagram Report
-            </button>
-          </div>
-        )}
         
         {error && (
           <div className="mb-4 p-4 bg-red-100 border border-red-400 text-red-700 rounded-md flex items-center">
@@ -567,85 +395,27 @@ export default function App() {
           </div>
         )}
         
-        {/* X Report Tab */}
-        {(tweetsData || igPostsData) && activeTab === 'x' && (
-          <div>
-            <button
-              onClick={generateReport}
-              disabled={!tweetsData || !metricsData || loading}
-              className={`mb-6 px-8 py-3 rounded-md font-semibold text-white transition-colors ${
-                tweetsData && metricsData && !loading
-                  ? 'bg-blue-700 hover:bg-blue-800 cursor-pointer'
-                  : 'bg-gray-400 cursor-not-allowed'
-              }`}
-            >
-              Generate X Report
-            </button>
-            
-            {report && (
-              <div className="bg-gray-50 p-6 rounded-lg">
-                <div className="flex justify-between items-center mb-4">
-                  <h2 className="text-xl font-semibold text-gray-800">X Report</h2>
-                  <button
-                    onClick={() => copyToClipboard(report)}
-                    className="flex items-center px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 transition-colors"
-                  >
-                    <Copy className="w-4 h-4 mr-2" />
-                    Copy to Clipboard
-                  </button>
-                </div>
-                <div 
-                  className="whitespace-pre-wrap text-sm bg-white p-4 rounded border border-gray-200"
-                  dangerouslySetInnerHTML={{ 
-                    __html: report
-                      .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-                      .replace(/Link: (https:\/\/[^\n]+)/g, 'Link: <a href="$1" target="_blank" class="text-blue-600 hover:underline">$1</a>')
-                      .replace(/\n/g, '<br>') 
-                  }}
-                />
-              </div>
-            )}
-          </div>
-        )}
-        
-        {/* Instagram Report Tab */}
-        {(tweetsData || igPostsData) && activeTab === 'instagram' && (
-          <div>
-            <button
-              onClick={generateInstagramReport}
-              disabled={!igPostsData || !fbPostsData || !metricsData || loading}
-              className={`mb-6 px-8 py-3 rounded-md font-semibold text-white transition-colors ${
-                igPostsData && fbPostsData && metricsData && !loading
-                  ? 'bg-gradient-to-r from-purple-600 to-pink-500 hover:from-purple-700 hover:to-pink-600 cursor-pointer'
-                  : 'bg-gray-400 cursor-not-allowed'
-              }`}
-            >
-              Generate Instagram Report
-            </button>
-            
-            {igReport && (
-              <div className="bg-gray-50 p-6 rounded-lg">
-                <div className="flex justify-between items-center mb-4">
-                  <h2 className="text-xl font-semibold text-gray-800">Instagram Report</h2>
-                  <button
-                    onClick={() => copyToClipboard(igReport)}
-                    className="flex items-center px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 transition-colors"
-                  >
-                    <Copy className="w-4 h-4 mr-2" />
-                    Copy to Clipboard
-                  </button>
-                </div>
-                <div 
-                  className="whitespace-pre-wrap text-sm bg-white p-4 rounded border border-gray-200"
-                  dangerouslySetInnerHTML={{ 
-                    __html: igReport
-                      .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-                      .replace(/Link: (https:\/\/[^\n]+)/g, 'Link: <a href="$1" target="_blank" class="text-blue-600 hover:underline">$1</a>')
-                      .replace(/\n/g, '<br>') 
-                  }}
-                />
-              </div>
-            )}
+        {report && (
+          <div className="mt-8 bg-gray-50 p-6 rounded-lg">
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-xl font-semibold text-gray-800">Generated Report</h2>
+              <button
+                onClick={copyToClipboard}
+                className="flex items-center px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 transition-colors"
+              >
+                <Copy className="w-4 h-4 mr-2" />
+                Copy to Clipboard
+              </button>
+            </div>
+            <div 
+              className="whitespace-pre-wrap text-sm bg-white p-4 rounded border border-gray-200"
+              dangerouslySetInnerHTML={{ 
+                __html: report
+                  .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                  .replace(/Link: (https:\/\/[^\n]+)/g, 'Link: <a href="$1" target="_blank" class="text-blue-600 hover:underline">$1</a>')
+                  .replace(/\n/g, '<br>') 
+              }}
+            />
           </div>
         )}
       </div>
