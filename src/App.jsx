@@ -238,9 +238,9 @@ export default function App() {
       let totalMentions = 0;
       
       metricsData.forEach((row, index) => {
-        // Find the correct column names dynamically
-        const followersKey = Object.keys(row).find(k => k.includes('Followers (Overall aggregated value'));
-        const newFollowersKey = Object.keys(row).find(k => k.includes('Net new followers'));
+        // Find the correct column names dynamically — use @SecVetAffairs to match X (not IG)
+        const followersKey = Object.keys(row).find(k => k.includes('Followers') && k.includes('@SecVetAffairs'));
+        const newFollowersKey = Object.keys(row).find(k => k.includes('Net new followers') && k.includes('@SecVetAffairs'));
         const impressionsKey = Object.keys(row).find(k => k.includes('Post impressions'));
         const mentionsKey = Object.keys(row).find(k => k.includes('Mentions'));
         
